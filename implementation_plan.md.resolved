@@ -1,0 +1,467 @@
+# Mood & Munch — Implementation Plan
+
+A context-aware food recommendation app that combines five real-time signals (time, weather, activity, mood, hunger) with Gemini AI to deliver personalized, nutritionally-grounded meal suggestions from multiple global cuisines.
+
+## Architecture Overview
+
+```mermaid
+graph TB
+    subgraph Frontend["React + Vite (Port 5173)"]
+        A[Login Page] --> B[Dashboard]
+        B --> C[Context Input Panel]
+        C --> D[Mood Chips]
+        C --> E[Hunger Chips]
+        B --> F[Results Panel]
+        F --> G[Meal Cards]
+        F --> H[Avoid List]
+        F --> I[Hydration Tip]
+        F --> J[Next Meal Hint]
+    end
+    
+    subgraph Backend["Node.js + Express (Port 3001)"]
+        K[Auth Middleware] --> L[/api/recommend]
+        L --> M[Weather Service]
+        L --> N[Fit Service]
+        L --> O[Gemini Service]
+        L --> P[Session Service]
+    end
+    
+    subgraph ML["Python Flask (Port 5000)"]
+        Q[/api/preferences] --> R[Preference Engine]
+    end
+    
+    subgraph Google["Google Services"]
+        S[Firebase Auth]
+        T[Firestore]
+        U[Weather API]
+        V[Google Fit API]
+        W[Gemini API]
+    end
+    
+    B -->|ID Token| K
+    M -->|lat/lng| U
+    N -->|OAuth Token| V
+    O -->|Context JSON| W
+    P -->|Read/Write| T
+    A -->|Google Sign-In| S
+    R -->|Read History| T
+```
+
+---
+
+## User Review Required
+
+> [!IMPORTANT]
+> **API Keys Needed**: You will need to provide the following API keys/credentials before the app can connect to live services. Until then, the app uses **mock data** so you can see the full UI and flow working:
+> - Google Maps Platform API key (with Weather API enabled)
+> - Google Cloud OAuth 2.0 Client ID (for Firebase Auth + Google Fit)
+> - Firebase project config (apiKey, authDomain, projectId, etc.)
+> - Firebase Admin SDK service account JSON
+> - Gemini API key
+
+> [!IMPORTANT]
+> **Monorepo Structure**: The project will be organized as a monorepo with three services (`client/`, `server/`, `ml-service/`) in the workspace root. Each has its own `package.json` / `requirements.txt`. Is this structure acceptable?
+
+## Open Questions
+
+> [!NOTE]
+> **Google Fit OAuth**: Google Fit requires the user to grant OAuth consent for `fitness.activity.read` scope. The current plan uses a demo/mock mode for activity data by default, with a toggle to connect real Google Fit data. This avoids blocking the demo on OAuth consent screen setup.
+
+> [!NOTE]
+> **Python ML Service**: The Flask ML microservice learns cuisine preferences over time from feedback. For the initial build, it will use a simple weighted-average model. Is a more sophisticated model (collaborative filtering, etc.) needed for v1?
+
+---
+
+## Proposed Changes
+
+### Project Structure
+
+```
+c:\Users\Nigam\Desktop\antigravity\
+├── client/                          # React + Vite frontend
+│   ├── public/
+│   ├── src/
+│   │   ├── assets/                  # Generated images, icons
+│   │   ├── components/
+│   │   │   ├── Auth/
+│   │   │   │   └── LoginPage.jsx
+│   │   │   ├── Dashboard/
+│   │   │   │   ├── Dashboard.jsx
+│   │   │   │   ├── ContextPanel.jsx
+│   │   │   │   ├── MoodChips.jsx
+│   │   │   │   ├── HungerChips.jsx
+│   │   │   │   └── WeatherCard.jsx
+│   │   │   ├── Results/
+│   │   │   │   ├── ResultsPanel.jsx
+│   │   │   │   ├── MealCard.jsx
+│   │   │   │   ├── AvoidList.jsx
+│   │   │   │   ├── HydrationTip.jsx
+│   │   │   │   └── NextMealHint.jsx
+│   │   │   └── Shared/
+│   │   │       ├── Loader.jsx
+│   │   │       ├── AnimatedBackground.jsx
+│   │   │       └── Navbar.jsx
+│   │   ├── hooks/
+│   │   │   ├── useAuth.js
+│   │   │   └── useGeolocation.js
+│   │   ├── services/
+│   │   │   ├── firebase.js
+│   │   │   └── api.js
+│   │   ├── App.jsx
+│   │   ├── App.css
+│   │   ├── index.css
+│   │   └── main.jsx
+│   ├── index.html
+│   ├── package.json
+│   └── vite.config.js
+├── server/                          # Node.js + Express backend
+│   ├── src/
+│   │   ├── middleware/
+│   │   │   └── auth.js
+│   │   ├── services/
+│   │   │   ├── weatherService.js
+│   │   │   ├── fitService.js
+│   │   │   ├── geminiService.js
+│   │   │   ├── sessionService.js
+│   │   │   └── cacheService.js
+│   │   ├── routes/
+│   │   │   ├── recommend.js
+│   │   │   └── feedback.js
+│   │   ├── prompts/
+│   │   │   └── mealPrompt.js
+│   │   ├── utils/
+│   │   │   ├── contextHash.js
+│   │   │   └── validators.js
+│   │   └── index.js
+│   ├── package.json
+│   └── .env.example
+├── ml-service/                      # Python Flask ML microservice
+│   ├── app.py
+│   ├── preference_engine.py
+│   ├── requirements.txt
+│   └── .env.example
+└── README.md
+```
+
+---
+
+### Component 1: React Frontend (`client/`)
+
+#### [NEW] client/index.html
+- Vite entry point with Google Fonts (Outfit, Inter), meta tags, favicon
+
+#### [NEW] client/src/index.css
+**Design System — Dark-mode first, glassmorphism aesthetic:**
+- **Color Palette**: Deep navy (`#0a0e1a`) base, gradient accents using warm amber (`#f59e0b`) to coral (`#ef4444`), cool teal (`#06b6d4`) for hydration, soft purple (`#8b5cf6`) for AI
+- **Glass Cards**: `backdrop-filter: blur(16px)`, semi-transparent backgrounds with subtle border glow
+- **Typography**: `Outfit` for headings, `Inter` for body — imported from Google Fonts
+- **Animations**: Pulse glow on mood chips, slide-up reveals for meal cards, shimmer loading states, floating gradient orbs in background
+- **Chip Styles**: Pill-shaped selectors with emoji icons, active state with scale + glow
+- **Cuisine Badges**: Color-coded per cuisine (🟠 Indian, 🔴 Chinese, 🔵 Continental, 🟢 Mediterranean, etc.)
+
+#### [NEW] client/src/components/Auth/LoginPage.jsx
+- Full-screen animated gradient background with floating food emoji particles
+- Centered glass card with app logo, tagline, and "Sign in with Google" button
+- Firebase `signInWithPopup(GoogleAuthProvider)` integration
+- Redirects to Dashboard on successful auth
+
+#### [NEW] client/src/components/Dashboard/Dashboard.jsx
+- Main layout: split into ContextPanel (left/top) and ResultsPanel (right/bottom)
+- Fetches weather data on mount using geolocation
+- Orchestrates the recommendation flow: collects all 5 signals → POST to `/api/recommend` → displays results
+- Responsive: stacks vertically on mobile
+
+#### [NEW] client/src/components/Dashboard/ContextPanel.jsx
+- Contains WeatherCard, MoodChips, HungerChips
+- Shows current time-of-day as a gradient badge (Morning ☀️, Afternoon 🌤️, Evening 🌅, Night 🌙)
+- Shows activity level indicator (with mock/real toggle)
+- "Get Recommendations" button with loading animation
+
+#### [NEW] client/src/components/Dashboard/MoodChips.jsx
+- Seven mood chips: 😴 Tired, 😰 Stressed, ⚡ Energetic, 😟 Anxious, 🎯 Focused, 😊 Happy, 😢 Sad
+- Single-select with animated bounce + glow on selection
+- Accessible: `role="radiogroup"`, `aria-label` on each chip
+
+#### [NEW] client/src/components/Dashboard/HungerChips.jsx
+- Four hunger chips: 🍿 Snack, 🥗 Light Meal, 🍽️ Full Meal, 🍖 Very Hungry
+- Single-select with calorie range subtitle under each chip
+- Same interaction pattern as MoodChips
+
+#### [NEW] client/src/components/Dashboard/WeatherCard.jsx
+- Displays live weather: temperature, humidity, condition icon, description
+- Uses the Weather API icon URL from response
+- Animated weather background effect (rain particles, sun rays, clouds)
+- Shows location name
+
+#### [NEW] client/src/components/Results/ResultsPanel.jsx
+- Container for all AI response sections
+- Slide-up staggered reveal animation
+- Sections: Context Summary → Nutritional Rationale → Meal Cards → Avoid List → Hydration Tip → Next Meal Hint
+
+#### [NEW] client/src/components/Results/MealCard.jsx
+- Glass card with cuisine color badge, dish name, meal type tag
+- Expandable "Why this dish?" section with explanation
+- Key nutrients as small pills/tags
+- Star rating (1-5) for feedback — saves to Firestore via backend
+- Generated food illustration per card
+
+#### [NEW] client/src/components/Results/AvoidList.jsx
+- Red-tinted glass card with ⚠️ icon
+- Each avoid item shows food name + contextual reason
+- Subtle shake animation on entry
+
+#### [NEW] client/src/components/Results/HydrationTip.jsx
+- Teal-themed glass card with 💧 icon
+- Animated water droplet illustration
+- Shows hydration recommendation text
+
+#### [NEW] client/src/components/Results/NextMealHint.jsx
+- Purple-themed card with ⏰ icon
+- Shows when to eat next + what category to target
+
+#### [NEW] client/src/components/Shared/AnimatedBackground.jsx
+- Canvas-based floating gradient orbs (4-6 orbs, CSS blur, slow drift animation)
+- Creates the premium ambient background for the entire app
+
+#### [NEW] client/src/components/Shared/Navbar.jsx
+- Glass navbar with app name + emoji logo
+- User avatar (from Google Sign-In) and sign-out button
+- Current location display
+
+#### [NEW] client/src/components/Shared/Loader.jsx
+- Animated food emoji spinner (rotating plate with fork/knife)
+- Shimmer placeholder cards during loading
+
+#### [NEW] client/src/services/firebase.js
+- Firebase app initialization with config from env vars
+- Exports `auth`, `googleProvider`, `db` (Firestore)
+
+#### [NEW] client/src/services/api.js
+- Axios instance with base URL = `http://localhost:3001`
+- Auto-attaches Firebase ID token to Authorization header
+- `getRecommendations(contextData)` → POST `/api/recommend`
+- `submitFeedback(sessionId, dishId, rating)` → POST `/api/feedback`
+
+#### [NEW] client/src/hooks/useAuth.js
+- `onAuthStateChanged` listener
+- Returns `{ user, loading, signIn, signOut }`
+
+#### [NEW] client/src/hooks/useGeolocation.js
+- `navigator.geolocation.getCurrentPosition` wrapper
+- Returns `{ latitude, longitude, error, loading }`
+
+#### [NEW] client/vite.config.js
+- React plugin, proxy `/api` to `http://localhost:3001`
+
+---
+
+### Component 2: Node.js Backend (`server/`)
+
+#### [NEW] server/src/index.js
+- Express app with CORS, JSON parsing, rate limiting
+- Mounts routes: `/api/recommend`, `/api/feedback`
+- Port 3001
+
+#### [NEW] server/src/middleware/auth.js
+- Extracts `Bearer <token>` from Authorization header
+- Verifies with `admin.auth().verifyIdToken(token)`
+- Attaches `req.user = { uid, email, name }` to request
+- Returns 401 on invalid/missing token
+- **For demo mode**: Falls back to a mock user if `DEMO_MODE=true`
+
+#### [NEW] server/src/services/weatherService.js
+- `getWeather(lat, lng)` → `GET https://weather.googleapis.com/v1/currentConditions:lookup`
+- Extracts: temperature (°C), humidity, condition type, description, wind speed
+- Classifies weather: `hot` (>32°C), `cold` (<15°C), `rainy` (precipitation), `moderate` (else)
+- **Mock mode**: Returns realistic mock data when no API key is configured
+
+#### [NEW] server/src/services/fitService.js
+- `getActivity(accessToken)` → `POST https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate`
+- Requests `com.google.step_count.delta` and `com.google.calories.expended` for last 2 hours
+- Classifies: `sedentary` (<2000 steps), `light` (2000-5000), `moderate` (5000-10000), `intense` (>10000 or >600 cal)
+- **Mock mode**: Returns configurable mock activity data
+
+#### [NEW] server/src/services/geminiService.js
+- Uses `@google/generative-ai` SDK with `gemini-2.5-flash` model
+- Sends the full system prompt (from `mealPrompt.js`) + context JSON
+- Uses `responseMimeType: "application/json"` + `responseSchema` for structured output
+- Schema enforces: `summary`, `rationale`, `meals[]`, `avoidList[]`, `hydrationTip`, `nextMealHint`
+- **Mock mode**: Returns a high-quality mock response demonstrating the full output structure
+
+#### [NEW] server/src/prompts/mealPrompt.js
+- Contains the full AI system prompt as specified in the user's requirements
+- Covers all nutritional logic, cuisine coverage rules, conflict resolution priority
+- Parameterized with user preferences from ML service
+
+#### [NEW] server/src/services/sessionService.js
+- Saves each session to Firestore: `users/{uid}/sessions/{sessionId}`
+- Session doc: `{ timestamp, contextInput, aiResponse, feedback: {} }`
+- Retrieves session history for the ML service
+
+#### [NEW] server/src/services/cacheService.js
+- In-memory LRU cache keyed by context hash
+- TTL: 15 minutes (weather data freshness)
+- Avoids redundant Gemini API calls for identical contexts
+
+#### [NEW] server/src/utils/contextHash.js
+- Creates a deterministic hash from the 5 context signals
+- Used as cache key
+
+#### [NEW] server/src/utils/validators.js
+- Joi/Zod validation for incoming context data
+- Validates mood ∈ {tired, stressed, energetic, anxious, focused, happy, sad}
+- Validates hunger ∈ {snack, light_meal, full_meal, very_hungry}
+- Validates lat/lng ranges
+
+#### [NEW] server/src/routes/recommend.js
+- `POST /api/recommend`
+- Body: `{ latitude, longitude, mood, hunger, fitAccessToken? }`
+- Flow:
+  1. Validate input
+  2. Determine time of day from server clock
+  3. Parallel fetch: `Promise.all([getWeather(), getActivity()])`
+  4. Check cache for existing response
+  5. Fetch user preferences from ML service
+  6. Build context JSON
+  7. Call Gemini
+  8. Save session to Firestore
+  9. Return structured response
+
+#### [NEW] server/src/routes/feedback.js
+- `POST /api/feedback`
+- Body: `{ sessionId, dishName, rating }`
+- Updates session doc in Firestore with rating
+- Triggers async preference update in ML service
+
+---
+
+### Component 3: Python Flask ML Service (`ml-service/`)
+
+#### [NEW] ml-service/app.py
+- Flask app on port 5000
+- `GET /api/preferences/<uid>` — returns learned cuisine preferences
+- `POST /api/learn` — receives feedback data and updates preference model
+
+#### [NEW] ml-service/preference_engine.py
+- Simple weighted-average preference model
+- Tracks: cuisine preference scores, dish-level ratings, mood-cuisine correlations
+- Reads from Firestore `users/{uid}/sessions/*`
+- Returns preference weights as JSON (e.g., `{ "Indian": 0.85, "Japanese": 0.72, ... }`)
+
+---
+
+### Component 4: Root Configuration
+
+#### [NEW] README.md
+- Project overview and architecture diagram
+- Prerequisites (Node.js 18+, Python 3.10+, API keys)
+- Step-by-step setup instructions for each service
+- Environment variable reference
+- Demo mode documentation
+- Screenshots placeholder
+
+---
+
+## API Contract
+
+### POST `/api/recommend`
+
+**Request:**
+```json
+{
+  "latitude": 28.6139,
+  "longitude": 77.2090,
+  "mood": "tired",
+  "hunger": "full_meal",
+  "fitAccessToken": "optional_google_fit_token"
+}
+```
+
+**Response:**
+```json
+{
+  "contextSummary": "It's a hot afternoon in Delhi and you're feeling tired after minimal activity — your body needs iron, B-vitamins, and hydrating foods without heavy oils.",
+  "rationale": "With the temperature at 38°C and high humidity, your body is already working hard to cool itself. Being tired compounds the energy drain. Your digestive system needs easily absorbed nutrients — specifically iron-rich leafy greens and B-vitamin sources like whole grains — rather than heavy, oil-laden dishes that would further tax your metabolism in this heat.",
+  "meals": [
+    {
+      "rank": 1,
+      "name": "Palak dal with cumin-tempered brown rice",
+      "cuisine": "Indian",
+      "mealType": "Main Course",
+      "reason": "Spinach provides the iron your tired body craves while the lentils offer sustained protein without the heaviness of meat in this heat.",
+      "nutrients": ["Iron", "B-vitamins", "Plant Protein", "Fiber"]
+    },
+    {
+      "rank": 2,
+      "name": "Chilled sesame cucumber noodles with tofu",
+      "cuisine": "Chinese",
+      "mealType": "Main Course",
+      "reason": "Cold noodles are ideal for extreme heat, and sesame provides magnesium to combat fatigue while tofu adds light protein.",
+      "nutrients": ["Magnesium", "Protein", "Hydration", "Selenium"]
+    }
+  ],
+  "avoidList": [
+    {
+      "item": "Deep-fried samosas or pakoras",
+      "reason": "Heavy oil increases body heat and slows digestion — dangerous when you're already fatigued in 38°C weather."
+    },
+    {
+      "item": "Sugary iced tea or cold coffee",
+      "reason": "The sugar crash will worsen your tiredness within 45 minutes, and caffeine can further dehydrate you in this heat."
+    }
+  ],
+  "hydrationTip": "Drink at least 500ml of water with a pinch of salt and lemon juice in the next hour. The heat and your fatigue suggest early signs of mild dehydration.",
+  "nextMealHint": "Plan a light evening snack around 6:30 PM — a small bowl of chilled yogurt with roasted makhana would sustain you without disrupting sleep.",
+  "weather": {
+    "temperature": 38,
+    "humidity": 65,
+    "condition": "hot",
+    "description": "Partly Cloudy"
+  },
+  "activity": {
+    "steps": 1200,
+    "calories": 150,
+    "level": "sedentary"
+  },
+  "timeOfDay": "afternoon_slump"
+}
+```
+
+---
+
+## Design Aesthetics — Key Decisions
+
+| Element | Design Choice |
+|---------|---------------|
+| **Background** | Animated gradient orbs on dark navy `#0a0e1a` |
+| **Cards** | Glassmorphism: `rgba(255,255,255,0.06)` + `backdrop-filter: blur(16px)` + subtle border glow |
+| **Mood Chips** | Pill shape with emoji + label, amber glow on select, scale(1.05) bounce |
+| **Meal Cards** | Staggered slide-up entry, cuisine badge color-coded, expandable rationale |
+| **Typography** | Outfit 700 for headings, Inter 400 for body, all white/light gray on dark |
+| **Accents** | Amber `#f59e0b` for food/energy, Teal `#06b6d4` for hydration, Coral `#ef4444` for avoid |
+| **Loading** | Shimmer skeletons + pulsing food emoji |
+| **Responsiveness** | CSS Grid → single column below 768px, touch-optimized chips |
+
+---
+
+## Verification Plan
+
+### Automated Tests
+1. **Backend validation tests**: Run `node` scripts to validate input sanitization (invalid moods, out-of-range lat/lng, missing fields)
+2. **Mock mode end-to-end**: Start all 3 services with `DEMO_MODE=true`, open browser, verify full flow from login → context input → recommendation display
+3. **Cache test**: Make identical requests twice, verify second uses cache (measurable by response time)
+
+### Manual Verification
+1. **Visual inspection via browser**: Open `http://localhost:5173`, verify:
+   - Login page animations and Google Sign-In button
+   - Dashboard layout with weather card, mood/hunger chips
+   - Recommendation cards with all sections (summary, rationale, meals, avoid, hydration, next meal)
+   - Responsive layout on narrow viewport
+   - Accessibility: tab navigation through chips, aria labels
+2. **API testing**: Test `/api/recommend` endpoint directly with curl/Postman
+3. **Record browser demo**: Capture a full user flow recording
+
+### Build Verification
+- `npm run build` on client to verify production bundle compiles
+- `npm start` on server to verify Express starts cleanly
+- `pip install -r requirements.txt && python app.py` on ml-service

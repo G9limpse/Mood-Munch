@@ -1,0 +1,40 @@
+services:
+  # 1. ML Service (Python Flask)
+  - type: web
+    name: mood-munch-ml
+    env: python
+    rootDir: ml-service
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    envVars:
+      - key: FLASK_ENV
+        value: production
+
+  # 2. Backend Service (Node.js Express)
+  - type: web
+    name: mood-munch-backend
+    env: node
+    rootDir: server
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: DEMO_MODE
+        value: true # Change to false in Render dashboard later
+      # Note: You will need to add GEMINI_API_KEY, GOOGLE_MAPS_API_KEY, etc. in the Render Dashboard
+
+  # 3. Frontend Service (Vite React)
+  - type: web
+    name: mood-munch-client
+    env: static
+    rootDir: client
+    buildCommand: npm install && npm run build
+    staticPublishPath: ./dist
+    envVars:
+      - key: VITE_DEMO_MODE
+        value: true # Change to false in Render dashboard later
+      - key: VITE_API_URL
+        fromService:
+          name: mood-munch-backend
+          type: web
+          property: host
+        # Render automatically injects the backend URL here!
